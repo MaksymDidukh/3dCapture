@@ -28,6 +28,10 @@
             flex-direction: column;
             gap: 8px;
         }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+        }
         button {
             pointer-events: auto;
             background: rgba(0, 240, 255, 0.2);
@@ -54,7 +58,10 @@
     <div id="ui">
         <div>ЛКМ + Перетаскивание: Протянуть витую лозу</div>
         <div>ПКМ + Перетаскивание: Вращать камеру | Колесико: Масштаб</div>
-        <button id="add-btn">➕ Добавить сферу игрока</button>
+        <div class="btn-group">
+            <button id="spawn-random-btn">🎲 Создать рандомную сферу</button>
+            <button id="respawn-btn">🔄 Возродиться</button>
+        </div>
     </div>
     <div id="canvas-container"></div>
 
@@ -79,7 +86,6 @@
             ENEMY3: ['🤡', '💥', '💣', '🎃', '👺']
         };
 
-        // Скорость постройки регулируется на старте (меньше = дольше протягивание)
         const GLOBAL_BUILD_SPEED = 0.005;
 
         let scene, camera, renderer, controls;
@@ -98,9 +104,11 @@
             const container = document.getElementById('canvas-container');
 
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x050811, 0.008);
+            
+            // Переходим на линейный туман для адаптивной подстройки под камеру
+            scene.fog = new THREE.Fog(0x050811, 20, 150);
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
             camera.position.set(0, 0, 40);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -117,7 +125,7 @@
                 RIGHT: THREE.MOUSE.ROTATE
             };
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
             scene.add(ambientLight);
 
             const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -138,24 +146,28 @@
             renderer.domElement.addEventListener('pointermove', onPointerMove);
             renderer.domElement.addEventListener('pointerup', onPointerUp);
 
-            document.getElementById('add-btn').addEventListener('click', () => {
+            document.getElementById('spawn-random-btn').addEventListener('click', () => {
+                spawnNodeInView(null);
+            });
+
+            document.getElementById('respawn-btn').addEventListener('click', () => {
                 spawnNodeInView('PLAYER');
                 checkPlayerStatus();
             });
 
-            setInterval(aiTick, 1400);
-            setInterval(checkPlayerStatus, 500);
+            setInterval(aiTick, 1200);
+            setInterval(checkPlayerStatus, 300);
         }
 
         function checkPlayerStatus() {
             const playerNodes = nodes.filter(n => n.owner === 'PLAYER');
-            const btn = document.getElementById('add-btn');
+            const respawnBtn = document.getElementById('respawn-btn');
             if (playerNodes.length === 0) {
-                btn.disabled = false;
-                btn.innerText = "➕ Возродиться (создать сферу игрока)";
+                respawnBtn.disabled = false;
+                respawnBtn.innerText = "🔄 Возродиться";
             } else {
-                btn.disabled = true;
-                btn.innerText = "➕ Сфера игрока активна";
+                respawnBtn.disabled = true;
+                respawnBtn.innerText = "🔄 Игрок жив";
             }
         }
 
@@ -195,7 +207,6 @@
             }
         }
 
-        // Генерация спирали с уникальной синусоидальной кривизной для каждого витка
         function generateRandomSpiralPoints(from, to, segments = 100) {
             const points = [];
             const dir = new THREE.Vector3().subVectors(to, from);
@@ -208,7 +219,6 @@
             const side = new THREE.Vector3().crossVectors(normalDir, up).normalize();
             const orthoUp = new THREE.Vector3().crossVectors(side, normalDir).normalize();
 
-            // Генерация случайных параметров синусоид для витков на этапе постройки
             const numCoils = 6;
             const coilParams = [];
             for (let i = 0; i < numCoils; i++) {
@@ -223,12 +233,10 @@
                 const t = i / segments;
                 const basePos = new THREE.Vector3().lerpVectors(from, to, t);
 
-                // Определение индекса витка и его уникальных параметров
                 const currentCoilIndex = Math.min(Math.floor(t * numCoils), numCoils - 1);
                 const params = coilParams[currentCoilIndex];
 
                 const baseAngle = t * Math.PI * 2 * numCoils;
-                // Каждый виток имеет индивидуальную синусоидальную амплитуду и сдвиг фазы
                 const r = Math.sin(t * Math.PI) * (0.8 * params.ampNoise) * Math.sin(baseAngle * params.freqShift + params.phase);
 
                 const offsetX = side.clone().multiplyScalar(Math.cos(baseAngle) * r);
@@ -437,14 +445,25 @@
             const teams = ['ENEMY1', 'ENEMY2', 'ENEMY3'];
             teams.forEach(team => {
                 const myNodes = nodes.filter(n => n.owner === team);
-                if (myNodes.length === 0) return;
 
-                if (Math.random() < 0.25 && myNodes.length < 7) {
-                    const parent = myNodes[Math.floor(Math.random() * myNodes.length)];
-                    if (parent.radius > 2.2) {
-                        const newNode = spawnNodeInView(team);
-                        addConnection(parent, newNode);
-                        return;
+                if (myNodes.length === 0) {
+                    if (Math.random() < 0.35) {
+                        spawnNodeInView(team);
+                    }
+                    return;
+                }
+
+                if (Math.random() < 0.3 && myNodes.length < 8) {
+                    const choice = Math.random();
+                    if (choice < 0.5) {
+                        spawnNodeInView(null);
+                    } else {
+                        const parent = myNodes[Math.floor(Math.random() * myNodes.length)];
+                        if (parent.radius > 2.0) {
+                            const newNode = spawnNodeInView(team);
+                            addConnection(parent, newNode);
+                            return;
+                        }
                     }
                 }
 
@@ -502,6 +521,11 @@
             requestAnimationFrame(animate);
 
             controls.update();
+
+            // Динамический перерасчет границы тумана относительно дистанции камеры
+            const dist = camera.position.distanceTo(controls.target);
+            scene.fog.near = dist * 1.5;
+            scene.fog.far = dist * 4.5;
 
             nodes.forEach(node => {
                 if (node.owner !== 'NEUTRAL' && node.radius < node.maxRadius) {
