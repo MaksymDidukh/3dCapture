@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Random Spiral Vine Battle</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050811;
+            font-family: sans-serif;
+            user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #ffffff;
+            pointer-events: none;
+            font-size: 14px;
+            text-shadow: 0 0 8px rgba(0,255,255,0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        button {
+            pointer-events: auto;
+            background: rgba(0, 240, 255, 0.2);
+            border: 1px solid #00f0ff;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: 0.2s;
+        }
+        button:hover {
+            background: rgba(0, 240, 255, 0.5);
+        }
+        button:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: #555555;
+            color: #777777;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>ЛКМ + Перетаскивание: Протянуть витую лозу</div>
+        <div>ПКМ + Перетаскивание: Вращать камеру | Колесико: Масштаб</div>
+        <button id="add-btn">➕ Добавить сферу игрока</button>
+    </div>
+    <div id="canvas-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@twemoji/api@14.0.2/dist/twemoji.min.js"></script>
+
+    <script>
+        const COLORS = {
+            PLAYER: 0x00f0ff,
+            NEUTRAL: 0x888888,
+            ENEMY1: 0xff2a5f,
+            ENEMY2: 0x00ff66,
+            ENEMY3: 0xffaa00
+        };
+
+        const EMOJI_SETS = {
+            PLAYER: ['😎', '🚀', '⚡', '🤖', '👑'],
+            NEUTRAL: ['😐', '⚪', '💤', '📦', '🗿'],
+            ENEMY1: ['😈', '🔥', '💀', '👹', '👾'],
+            ENEMY2: ['👽', '☣️', '🧪', '🛸', '🦎'],
+            ENEMY3: ['🤡', '💥', '💣', '🎃', '👺']
+        };
+
+        // Скорость постройки регулируется на старте (меньше = дольше протягивание)
+        const GLOBAL_BUILD_SPEED = 0.005;
+
+        let scene, camera, renderer, controls;
+        let nodes = [];
+        let connections = [];
+        let selectedNode = null;
+        let dragLine = null;
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const drawPlane = new THREE.Plane();
+
+        init();
+        animate();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x050811, 0.008);
+
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 40);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.mouseButtons = {
+                LEFT: THREE.MOUSE.NONE,
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: THREE.MOUSE.ROTATE
+            };
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(10, 20, 30);
+            scene.add(dirLight);
+
+            createInitialNodes();
+
+            const previewPoints = generateRandomSpiralPoints(new THREE.Vector3(), new THREE.Vector3(1,1,0), 50);
+            const geom = new THREE.BufferGeometry().setFromPoints(previewPoints);
+            const mat = new THREE.LineBasicMaterial({ color: COLORS.PLAYER, linewidth: 2, transparent: true, opacity: 0.8 });
+            dragLine = new THREE.Line(geom, mat);
+            dragLine.visible = false;
+            scene.add(dragLine);
+
+            window.addEventListener('resize', onWindowResize);
+            renderer.domElement.addEventListener('pointerdown', onPointerDown);
+            renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+            document.getElementById('add-btn').addEventListener('click', () => {
+                spawnNodeInView('PLAYER');
+                checkPlayerStatus();
+            });
+
+            setInterval(aiTick, 1400);
+            setInterval(checkPlayerStatus, 500);
+        }
+
+        function checkPlayerStatus() {
+            const playerNodes = nodes.filter(n => n.owner === 'PLAYER');
+            const btn = document.getElementById('add-btn');
+            if (playerNodes.length === 0) {
+                btn.disabled = false;
+                btn.innerText = "➕ Возродиться (создать сферу игрока)";
+            } else {
+                btn.disabled = true;
+                btn.innerText = "➕ Сфера игрока активна";
+            }
+        }
+
+        function createEmojiTexture(emojiChar, callback) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            const drawFallback = () => {
+                ctx.clearRect(0, 0, 128, 128);
+                ctx.font = '75px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(emojiChar, 64, 64);
+                callback(new THREE.CanvasTexture(canvas));
+            };
+
+            try {
+                const parsedHtml = twemoji.parse(emojiChar, { folder: 'svg', ext: '.svg' });
+                const srcMatch = parsedHtml.match(/src="([^"]+)"/);
+
+                if (srcMatch && srcMatch[1]) {
+                    const img = new Image();
+                    img.crossOrigin = 'Anonymous';
+                    img.onload = () => {
+                        ctx.drawImage(img, 0, 0, 128, 128);
+                        callback(new THREE.CanvasTexture(canvas));
+                    };
+                    img.onerror = drawFallback;
+                    img.src = srcMatch[1];
+                } else {
+                    drawFallback();
+                }
+            } catch (e) {
+                drawFallback();
+            }
+        }
+
+        // Генерация спирали с уникальной синусоидальной кривизной для каждого витка
+        function generateRandomSpiralPoints(from, to, segments = 100) {
+            const points = [];
+            const dir = new THREE.Vector3().subVectors(to, from);
+            const len = dir.length();
+            if (len === 0) return [from.clone()];
+
+            const normalDir = dir.clone().normalize();
+            let up = new THREE.Vector3(0, 1, 0);
+            if (Math.abs(normalDir.dot(up)) > 0.9) up.set(1, 0, 0);
+            const side = new THREE.Vector3().crossVectors(normalDir, up).normalize();
+            const orthoUp = new THREE.Vector3().crossVectors(side, normalDir).normalize();
+
+            // Генерация случайных параметров синусоид для витков на этапе постройки
+            const numCoils = 6;
+            const coilParams = [];
+            for (let i = 0; i < numCoils; i++) {
+                coilParams.push({
+                    freqShift: 0.8 + Math.random() * 0.6,
+                    ampNoise: 0.6 + Math.random() * 0.8,
+                    phase: Math.random() * Math.PI * 2
+                });
+            }
+
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const basePos = new THREE.Vector3().lerpVectors(from, to, t);
+
+                // Определение индекса витка и его уникальных параметров
+                const currentCoilIndex = Math.min(Math.floor(t * numCoils), numCoils - 1);
+                const params = coilParams[currentCoilIndex];
+
+                const baseAngle = t * Math.PI * 2 * numCoils;
+                // Каждый виток имеет индивидуальную синусоидальную амплитуду и сдвиг фазы
+                const r = Math.sin(t * Math.PI) * (0.8 * params.ampNoise) * Math.sin(baseAngle * params.freqShift + params.phase);
+
+                const offsetX = side.clone().multiplyScalar(Math.cos(baseAngle) * r);
+                const offsetY = orthoUp.clone().multiplyScalar(Math.sin(baseAngle) * r);
+
+                basePos.add(offsetX).add(offsetY);
+                points.push(basePos);
+            }
+            return points;
+        }
+
+        function createNode(x, y, z, owner, radius) {
+            const geom = new THREE.SphereGeometry(1, 32, 32);
+            const mat = new THREE.MeshPhongMaterial({
+                color: COLORS[owner],
+                emissive: COLORS[owner],
+                emissiveIntensity: 0.2,
+                transparent: true,
+                opacity: 0.65,
+                shininess: 90
+            });
+
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(x, y, z);
+
+            const emojiList = EMOJI_SETS[owner];
+            const currentEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
+
+            const spriteMat = new THREE.SpriteMaterial({ transparent: true, opacity: 1 });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.scale.set(1.4, 1.4, 1.4);
+            mesh.add(sprite);
+
+            createEmojiTexture(currentEmoji, (texture) => {
+                sprite.material.map = texture;
+                sprite.material.needsUpdate = true;
+            });
+
+            const auraGeom = new THREE.SphereGeometry(1, 16, 16);
+            const auraMat = new THREE.MeshBasicMaterial({
+                color: COLORS[owner],
+                wireframe: true,
+                transparent: true,
+                opacity: 0.2
+            });
+            const aura = new THREE.Mesh(auraGeom, auraMat);
+            aura.scale.setScalar(1.15);
+            mesh.add(aura);
+
+            scene.add(mesh);
+
+            const node = {
+                id: nodes.length,
+                mesh: mesh,
+                aura: aura,
+                sprite: sprite,
+                owner: owner,
+                radius: radius,
+                maxRadius: 4.5,
+                minRadius: 1.0,
+                growthRate: 0.003
+            };
+
+            node.mesh.scale.setScalar(node.radius);
+            nodes.push(node);
+            return node;
+        }
+
+        function spawnNodeInView(forcedTeam = null) {
+            const distance = camera.position.distanceTo(controls.target);
+            const vFOV = THREE.MathUtils.degToRad(camera.fov);
+            const visibleHeight = 2 * Math.tan(vFOV / 2) * distance;
+            const visibleWidth = visibleHeight * camera.aspect;
+
+            const offsetX = (Math.random() - 0.5) * visibleWidth * 0.7;
+            const offsetY = (Math.random() - 0.5) * visibleHeight * 0.7;
+            const offsetZ = (Math.random() - 0.5) * (distance * 0.3);
+
+            const spawnPos = new THREE.Vector3(offsetX, offsetY, -distance + offsetZ);
+            spawnPos.applyMatrix4(camera.matrixWorld);
+
+            const teams = ['NEUTRAL', 'ENEMY1', 'ENEMY2', 'ENEMY3'];
+            const randomTeam = forcedTeam || teams[Math.floor(Math.random() * teams.length)];
+            const scaledRadius = Math.min(Math.max(1.5, distance * 0.05), 3.5);
+
+            return createNode(spawnPos.x, spawnPos.y, spawnPos.z, randomTeam, scaledRadius);
+        }
+
+        function createInitialNodes() {
+            const positions = [
+                { x: -15, y: -8, z: 0, owner: 'PLAYER', radius: 2.2 },
+                { x: 15, y: 8, z: 0, owner: 'ENEMY1', radius: 2.2 },
+                { x: -15, y: 8, z: -5, owner: 'ENEMY2', radius: 2.2 },
+                { x: 15, y: -8, z: 5, owner: 'ENEMY3', radius: 2.2 },
+                { x: 0, y: 0, z: 0, owner: 'NEUTRAL', radius: 2.8 }
+            ];
+
+            positions.forEach(p => createNode(p.x, p.y, p.z, p.owner, p.radius));
+        }
+
+        function createVineTube(fromPos, toPos, color) {
+            const spiralPoints = generateRandomSpiralPoints(fromPos, toPos, 120);
+            const curve = new THREE.CatmullRomCurve3(spiralPoints);
+
+            const geom = new THREE.TubeGeometry(curve, 100, 0.15, 8, false);
+            geom.setDrawRange(0, 0);
+
+            const mat = new THREE.MeshPhongMaterial({
+                color: color,
+                emissive: color,
+                emissiveIntensity: 0.3,
+                shininess: 50
+            });
+
+            const tube = new THREE.Mesh(geom, mat);
+            scene.add(tube);
+
+            return {
+                mesh: tube,
+                curve: curve,
+                totalIndices: geom.index.count,
+                progress: 0,
+                buildSpeed: GLOBAL_BUILD_SPEED,
+                isFullyBuilt: false
+            };
+        }
+
+        function getIntersectionPoint(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const target = new THREE.Vector3();
+            raycaster.ray.intersectPlane(drawPlane, target);
+            return target;
+        }
+
+        function onPointerDown(e) {
+            if (e.button !== 0) return;
+
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(nodes.map(n => n.mesh));
+
+            if (intersects.length > 0) {
+                const hitNode = nodes.find(n => n.mesh === intersects[0].object);
+                if (hitNode && hitNode.owner === 'PLAYER') {
+                    selectedNode = hitNode;
+                    drawPlane.setFromNormalAndCoplanarPoint(
+                        camera.getWorldDirection(new THREE.Vector3()).negate(),
+                        selectedNode.mesh.position
+                    );
+                    dragLine.visible = true;
+                }
+            }
+        }
+
+        function onPointerMove(e) {
+            if (!selectedNode) return;
+            const worldPos = getIntersectionPoint(e);
+            const start = selectedNode.mesh.position;
+            const points = generateRandomSpiralPoints(start, worldPos, 60);
+
+            dragLine.geometry.dispose();
+            dragLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
+        }
+
+        function onPointerUp(e) {
+            if (!selectedNode || e.button !== 0) return;
+
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+
+            const intersects = raycaster.intersectObjects(nodes.map(n => n.mesh));
+            if (intersects.length > 0) {
+                const targetNode = nodes.find(n => n.mesh === intersects[0].object);
+                if (targetNode && targetNode !== selectedNode) {
+                    addConnection(selectedNode, targetNode);
+                }
+            }
+
+            selectedNode = null;
+            dragLine.visible = false;
+        }
+
+        function addConnection(fromNode, toNode) {
+            const existingIndex = connections.findIndex(c => c.from === fromNode && c.to === toNode);
+            if (existingIndex !== -1) return;
+
+            const vineData = createVineTube(fromNode.mesh.position, toNode.mesh.position, COLORS[fromNode.owner]);
+            connections.push({
+                from: fromNode,
+                to: toNode,
+                mesh: vineData.mesh,
+                totalIndices: vineData.totalIndices,
+                progress: 0,
+                buildSpeed: vineData.buildSpeed,
+                isFullyBuilt: false
+            });
+        }
+
+        function aiTick() {
+            const teams = ['ENEMY1', 'ENEMY2', 'ENEMY3'];
+            teams.forEach(team => {
+                const myNodes = nodes.filter(n => n.owner === team);
+                if (myNodes.length === 0) return;
+
+                if (Math.random() < 0.25 && myNodes.length < 7) {
+                    const parent = myNodes[Math.floor(Math.random() * myNodes.length)];
+                    if (parent.radius > 2.2) {
+                        const newNode = spawnNodeInView(team);
+                        addConnection(parent, newNode);
+                        return;
+                    }
+                }
+
+                const source = myNodes[Math.floor(Math.random() * myNodes.length)];
+                if (source.radius < 1.5) return;
+
+                const targets = nodes.filter(n => n.owner !== team);
+                if (targets.length === 0) return;
+
+                targets.sort((a, b) => 
+                    source.mesh.position.distanceTo(a.mesh.position) - 
+                    source.mesh.position.distanceTo(b.mesh.position)
+                );
+
+                addConnection(source, targets[0]);
+            });
+        }
+
+        function triggerNodeDestruction(node, newOwner) {
+            let opacityVal = 1.0;
+            const emojiList = EMOJI_SETS[newOwner];
+            const nextEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
+
+            const animInterval = setInterval(() => {
+                opacityVal -= 0.15;
+                node.sprite.material.opacity = Math.max(0, opacityVal);
+
+                if (opacityVal <= 0) {
+                    clearInterval(animInterval);
+                    node.owner = newOwner;
+                    updateNodeAppearance(node);
+
+                    createEmojiTexture(nextEmoji, (texture) => {
+                        node.sprite.material.map = texture;
+                        node.sprite.material.needsUpdate = true;
+                        
+                        let fadeIn = 0;
+                        const fadeInInterval = setInterval(() => {
+                            fadeIn += 0.15;
+                            node.sprite.material.opacity = Math.min(1, fadeIn);
+                            if (fadeIn >= 1) clearInterval(fadeInInterval);
+                        }, 30);
+                    });
+                }
+            }, 30);
+        }
+
+        function updateNodeAppearance(node) {
+            node.mesh.material.color.setHex(COLORS[node.owner]);
+            node.mesh.material.emissive.setHex(COLORS[node.owner]);
+            node.aura.material.color.setHex(COLORS[node.owner]);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            controls.update();
+
+            nodes.forEach(node => {
+                if (node.owner !== 'NEUTRAL' && node.radius < node.maxRadius) {
+                    node.radius += node.growthRate;
+                    node.mesh.scale.setScalar(node.radius);
+                }
+                node.aura.rotation.y += 0.01;
+                node.aura.rotation.x += 0.005;
+            });
+
+            for (let i = connections.length - 1; i >= 0; i--) {
+                const conn = connections[i];
+
+                if (!conn.isFullyBuilt) {
+                    conn.progress += conn.buildSpeed;
+                    const drawCount = Math.floor(conn.progress * conn.totalIndices);
+                    conn.mesh.geometry.setDrawRange(0, drawCount);
+
+                    if (conn.progress >= 1.0) {
+                        conn.isFullyBuilt = true;
+                        conn.mesh.geometry.setDrawRange(0, conn.totalIndices);
+                    }
+                    continue;
+                }
+
+                const transferAmount = 0.008;
+
+                if (conn.from.radius > conn.from.minRadius + transferAmount) {
+                    conn.from.radius -= transferAmount;
+                    conn.from.mesh.scale.setScalar(conn.from.radius);
+
+                    if (conn.from.owner === conn.to.owner) {
+                        if (conn.to.radius < conn.to.maxRadius) {
+                            conn.to.radius += transferAmount;
+                        }
+                    } else {
+                        conn.to.radius -= transferAmount * 1.2;
+
+                        if (conn.to.radius <= conn.to.minRadius) {
+                            triggerNodeDestruction(conn.to, conn.from.owner);
+                            conn.to.radius = conn.to.minRadius + 0.2;
+
+                            connections = connections.filter(c => {
+                                if (c.from === conn.to) {
+                                    scene.remove(c.mesh);
+                                    return false;
+                                }
+                                return true;
+                            });
+                        }
+                    }
+                    conn.to.mesh.scale.setScalar(conn.to.radius);
+                } else {
+                    scene.remove(conn.mesh);
+                    connections.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    </script>
+     <script src="https://dmamax.netlify.app/legal-module.js"></script>
+</body>
+</html>
