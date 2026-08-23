@@ -22,25 +22,31 @@
             left: 20px;
             color: #ffffff;
             pointer-events: none;
-            font-size: 14px;
+            font-size: 13px;
             text-shadow: 0 0 8px rgba(0,255,255,0.5);
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
+            background: rgba(5, 8, 17, 0.75);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            max-width: 300px;
         }
         .btn-group {
             display: flex;
             gap: 8px;
+            flex-wrap: wrap;
         }
         button {
             pointer-events: auto;
             background: rgba(0, 240, 255, 0.2);
             border: 1px solid #00f0ff;
             color: white;
-            padding: 8px 15px;
+            padding: 6px 12px;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
             transition: 0.2s;
         }
         button:hover {
@@ -52,14 +58,69 @@
             color: #777777;
             cursor: not-allowed;
         }
+        .slider-control {
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            color: #00f0ff;
+        }
+        .checkbox-control {
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #00f0ff;
+            cursor: pointer;
+        }
+        input[type=range] {
+            accent-color: #00f0ff;
+            cursor: pointer;
+        }
+        input[type=checkbox] {
+            accent-color: #00f0ff;
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div>ЛКМ + Перетаскивание: Протянуть витую лозу</div>
-        <div>ПКМ + Перетаскивание: Вращать камеру | Колесико: Масштаб</div>
+        <div>ЛКМ + Драг: Протянуть лозу | Клик: Emoji</div>
+        <div>ПКМ: Вращение | Колесико: Масштаб</div>
+
+        <label class="checkbox-control">
+            <input type="checkbox" id="emoji-toggle" checked>
+            <span>😃 Отображать смайлики</span>
+        </label>
+
+        <div class="slider-control">
+            <div class="slider-label"><span>🌫️ Плотность тумана:</span><span id="fog-val">1.2</span></div>
+            <input type="range" id="fog-slider" min="0" max="3" step="0.1" value="1.2">
+        </div>
+
+        <div class="slider-control">
+            <div class="slider-label"><span>📍 Дистанция спавна:</span><span id="spawn-dist-val">15</span></div>
+            <input type="range" id="spawn-dist-slider" min="5" max="500" step="5" value="15">
+        </div>
+
+        <div class="slider-control">
+            <div class="slider-label"><span>🌱 Скорость роста:</span><span id="growth-val">0.003</span></div>
+            <input type="range" id="growth-slider" min="0.0005" max="0.015" step="0.0005" value="0.003">
+        </div>
+
+        <div class="slider-control">
+            <div class="slider-label"><span>⚡ Скорость лозы:</span><span id="speed-val">0.005</span></div>
+            <input type="range" id="speed-slider" min="0.001" max="0.02" step="0.001" value="0.005">
+        </div>
+
         <div class="btn-group">
-            <button id="spawn-random-btn">🎲 Создать рандомную сферу</button>
+            <button id="spawn-random-btn">🎲 Создать сферу</button>
             <button id="respawn-btn">🔄 Возродиться</button>
         </div>
     </div>
@@ -79,20 +140,29 @@
         };
 
         const EMOJI_SETS = {
-            PLAYER: ['😎', '🚀', '⚡', '🤖', '👑'],
-            NEUTRAL: ['😐', '⚪', '💤', '📦', '🗿'],
-            ENEMY1: ['😈', '🔥', '💀', '👹', '👾'],
-            ENEMY2: ['👽', '☣️', '🧪', '🛸', '🦎'],
-            ENEMY3: ['🤡', '💥', '💣', '🎃', '👺']
+            PLAYER: ['😎', '🚀', '⚡', '🤖', '👑', '🔥'],
+            NEUTRAL: ['😐', '⚪', '💤', '📦', '🗿', '💎'],
+            ENEMY1: ['😈', '🔥', '💀', '👹', '👾', '💥'],
+            ENEMY2: ['👽', '☣️', '🧪', '🛸', '🦎', '🦠'],
+            ENEMY3: ['🤡', '💥', '💣', '🎃', '👺', '👁️']
         };
 
-        const GLOBAL_BUILD_SPEED = 0.005;
+        let globalBuildSpeed = 0.005;
+        let globalGrowthRate = 0.003;
+        let globalFogMult = 1.2;
+        let globalSpawnDistance = 15;
+        let showEmojis = true;
+        const BASE_MAX_VISION = 500;
 
         let scene, camera, renderer, controls;
         let nodes = [];
         let connections = [];
         let selectedNode = null;
         let dragLine = null;
+
+        let pointerDownTime = 0;
+        let pointerDownPos = { x: 0, y: 0 };
+
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
         const drawPlane = new THREE.Plane();
@@ -104,11 +174,9 @@
             const container = document.getElementById('canvas-container');
 
             scene = new THREE.Scene();
-            
-            // Переходим на линейный туман для адаптивной подстройки под камеру
-            scene.fog = new THREE.Fog(0x050811, 20, 150);
+            scene.fog = new THREE.FogExp2(0x050811, 0.025);
 
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
             camera.position.set(0, 0, 40);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -125,7 +193,7 @@
                 RIGHT: THREE.MOUSE.ROTATE
             };
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
             scene.add(ambientLight);
 
             const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -140,6 +208,8 @@
             dragLine = new THREE.Line(geom, mat);
             dragLine.visible = false;
             scene.add(dragLine);
+
+            setupSliderListeners();
 
             window.addEventListener('resize', onWindowResize);
             renderer.domElement.addEventListener('pointerdown', onPointerDown);
@@ -157,6 +227,42 @@
 
             setInterval(aiTick, 1200);
             setInterval(checkPlayerStatus, 300);
+        }
+
+        function setupSliderListeners() {
+            const emojiToggle = document.getElementById('emoji-toggle');
+            emojiToggle.addEventListener('change', (e) => {
+                showEmojis = e.target.checked;
+                nodes.forEach(node => {
+                    if (node.sprite) {
+                        node.sprite.visible = showEmojis;
+                    }
+                });
+            });
+
+            const fogSlider = document.getElementById('fog-slider');
+            fogSlider.addEventListener('input', (e) => {
+                globalFogMult = parseFloat(e.target.value);
+                document.getElementById('fog-val').innerText = globalFogMult;
+            });
+
+            const spawnSlider = document.getElementById('spawn-dist-slider');
+            spawnSlider.addEventListener('input', (e) => {
+                globalSpawnDistance = parseFloat(e.target.value);
+                document.getElementById('spawn-dist-val').innerText = globalSpawnDistance;
+            });
+
+            const growthSlider = document.getElementById('growth-slider');
+            growthSlider.addEventListener('input', (e) => {
+                globalGrowthRate = parseFloat(e.target.value);
+                document.getElementById('growth-val').innerText = globalGrowthRate;
+            });
+
+            const speedSlider = document.getElementById('speed-slider');
+            speedSlider.addEventListener('input', (e) => {
+                globalBuildSpeed = parseFloat(e.target.value);
+                document.getElementById('speed-val').innerText = globalBuildSpeed;
+            });
         }
 
         function checkPlayerStatus() {
@@ -267,7 +373,10 @@
 
             const spriteMat = new THREE.SpriteMaterial({ transparent: true, opacity: 1 });
             const sprite = new THREE.Sprite(spriteMat);
-            sprite.scale.set(1.4, 1.4, 1.4);
+            sprite.visible = showEmojis;
+            
+            const spriteScale = radius * 1.5;
+            sprite.scale.set(spriteScale, spriteScale, spriteScale);
             mesh.add(sprite);
 
             createEmojiTexture(currentEmoji, (texture) => {
@@ -296,8 +405,7 @@
                 owner: owner,
                 radius: radius,
                 maxRadius: 4.5,
-                minRadius: 1.0,
-                growthRate: 0.003
+                minRadius: 1.0
             };
 
             node.mesh.scale.setScalar(node.radius);
@@ -306,21 +414,35 @@
         }
 
         function spawnNodeInView(forcedTeam = null) {
-            const distance = camera.position.distanceTo(controls.target);
-            const vFOV = THREE.MathUtils.degToRad(camera.fov);
-            const visibleHeight = 2 * Math.tan(vFOV / 2) * distance;
-            const visibleWidth = visibleHeight * camera.aspect;
+            let spawnPos = new THREE.Vector3();
 
-            const offsetX = (Math.random() - 0.5) * visibleWidth * 0.7;
-            const offsetY = (Math.random() - 0.5) * visibleHeight * 0.7;
-            const offsetZ = (Math.random() - 0.5) * (distance * 0.3);
+            if (nodes.length > 0) {
+                const baseNode = nodes[Math.floor(Math.random() * nodes.length)];
+                const offset = new THREE.Vector3(
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2,
+                    (Math.random() - 0.5) * 2
+                ).normalize().multiplyScalar(globalSpawnDistance);
+                
+                spawnPos.copy(baseNode.mesh.position).add(offset);
+            } else {
+                const currentDist = camera.position.distanceTo(controls.target);
+                const distance = Math.min(currentDist, BASE_MAX_VISION * 1.5);
+                const vFOV = THREE.MathUtils.degToRad(camera.fov);
+                const visibleHeight = 2 * Math.tan(vFOV / 2) * distance;
+                const visibleWidth = visibleHeight * camera.aspect;
 
-            const spawnPos = new THREE.Vector3(offsetX, offsetY, -distance + offsetZ);
-            spawnPos.applyMatrix4(camera.matrixWorld);
+                const offsetX = (Math.random() - 0.5) * visibleWidth * 0.7;
+                const offsetY = (Math.random() - 0.5) * visibleHeight * 0.7;
+                const offsetZ = (Math.random() - 0.5) * (distance * 0.3);
+
+                spawnPos.set(offsetX, offsetY, -distance + offsetZ);
+                spawnPos.applyMatrix4(camera.matrixWorld);
+            }
 
             const teams = ['NEUTRAL', 'ENEMY1', 'ENEMY2', 'ENEMY3'];
             const randomTeam = forcedTeam || teams[Math.floor(Math.random() * teams.length)];
-            const scaledRadius = Math.min(Math.max(1.5, distance * 0.05), 3.5);
+            const scaledRadius = 1.8 + Math.random() * 1.2;
 
             return createNode(spawnPos.x, spawnPos.y, spawnPos.z, randomTeam, scaledRadius);
         }
@@ -359,7 +481,6 @@
                 curve: curve,
                 totalIndices: geom.index.count,
                 progress: 0,
-                buildSpeed: GLOBAL_BUILD_SPEED,
                 isFullyBuilt: false
             };
         }
@@ -376,6 +497,9 @@
 
         function onPointerDown(e) {
             if (e.button !== 0) return;
+
+            pointerDownTime = Date.now();
+            pointerDownPos = { x: e.clientX, y: e.clientY };
 
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
@@ -407,22 +531,54 @@
         }
 
         function onPointerUp(e) {
-            if (!selectedNode || e.button !== 0) return;
+            if (e.button !== 0) return;
 
-            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-            raycaster.setFromCamera(mouse, camera);
+            const clickDuration = Date.now() - pointerDownTime;
+            const distMoved = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
 
-            const intersects = raycaster.intersectObjects(nodes.map(n => n.mesh));
-            if (intersects.length > 0) {
-                const targetNode = nodes.find(n => n.mesh === intersects[0].object);
-                if (targetNode && targetNode !== selectedNode) {
-                    addConnection(selectedNode, targetNode);
+            if (clickDuration < 250 && distMoved < 5) {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
+                const intersects = raycaster.intersectObjects(nodes.map(n => n.mesh));
+                if (intersects.length > 0) {
+                    const hitNode = nodes.find(n => n.mesh === intersects[0].object);
+                    if (hitNode) {
+                        onNodeClickInteract(hitNode);
+                    }
+                }
+            }
+
+            if (selectedNode) {
+                mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
+                const intersects = raycaster.intersectObjects(nodes.map(n => n.mesh));
+                if (intersects.length > 0) {
+                    const targetNode = nodes.find(n => n.mesh === intersects[0].object);
+                    if (targetNode && targetNode !== selectedNode) {
+                        addConnection(selectedNode, targetNode);
+                    }
                 }
             }
 
             selectedNode = null;
             dragLine.visible = false;
+        }
+
+        function onNodeClickInteract(node) {
+            const emojiList = EMOJI_SETS[node.owner];
+            const nextEmoji = emojiList[Math.floor(Math.random() * emojiList.length)];
+
+            node.radius = Math.min(node.maxRadius, node.radius + 0.4);
+            node.mesh.scale.setScalar(node.radius);
+
+            createEmojiTexture(nextEmoji, (texture) => {
+                node.sprite.material.map = texture;
+                node.sprite.material.needsUpdate = true;
+            });
         }
 
         function addConnection(fromNode, toNode) {
@@ -436,7 +592,6 @@
                 mesh: vineData.mesh,
                 totalIndices: vineData.totalIndices,
                 progress: 0,
-                buildSpeed: vineData.buildSpeed,
                 isFullyBuilt: false
             });
         }
@@ -470,7 +625,15 @@
                 const source = myNodes[Math.floor(Math.random() * myNodes.length)];
                 if (source.radius < 1.5) return;
 
-                const targets = nodes.filter(n => n.owner !== team);
+                const currentCamDist = camera.position.distanceTo(controls.target);
+                const maxRange = Math.max(BASE_MAX_VISION, currentCamDist * 1.2);
+
+                const targets = nodes.filter(n => {
+                    const isEnemy = n.owner !== team;
+                    const isWithinView = n.mesh.position.distanceTo(camera.position) <= maxRange;
+                    return isEnemy && isWithinView;
+                });
+
                 if (targets.length === 0) return;
 
                 targets.sort((a, b) => 
@@ -522,16 +685,22 @@
 
             controls.update();
 
-            // Динамический перерасчет границы тумана относительно дистанции камеры
-            const dist = camera.position.distanceTo(controls.target);
-            scene.fog.near = dist * 1.5;
-            scene.fog.far = dist * 4.5;
+            const camDist = camera.position.distanceTo(controls.target);
+            if (globalFogMult > 0) {
+                scene.fog.density = (globalFogMult) / Math.max(camDist, 15);
+            } else {
+                scene.fog.density = 0.00001;
+            }
 
             nodes.forEach(node => {
                 if (node.owner !== 'NEUTRAL' && node.radius < node.maxRadius) {
-                    node.radius += node.growthRate;
+                    node.radius += globalGrowthRate;
                     node.mesh.scale.setScalar(node.radius);
                 }
+
+                const currentScale = node.radius * 1.5;
+                node.sprite.scale.set(currentScale, currentScale, currentScale);
+
                 node.aura.rotation.y += 0.01;
                 node.aura.rotation.x += 0.005;
             });
@@ -540,7 +709,7 @@
                 const conn = connections[i];
 
                 if (!conn.isFullyBuilt) {
-                    conn.progress += conn.buildSpeed;
+                    conn.progress += globalBuildSpeed;
                     const drawCount = Math.floor(conn.progress * conn.totalIndices);
                     conn.mesh.geometry.setDrawRange(0, drawCount);
 
