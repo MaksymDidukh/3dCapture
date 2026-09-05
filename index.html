@@ -155,12 +155,12 @@
             </label>
 
             <div class="color-picker-control">
-                <span>🎨 Фон:</span>
+                <span>🎨 Верх (Синий):</span>
                 <input type="color" id="bg-color-1" value="#0099ff">
             </div>
 
             <div class="color-picker-control">
-                <span>🎨 Фон:</span>
+                <span>🎨 Низ (Желтый):</span>
                 <input type="color" id="bg-color-2" value="#ffd700">
             </div>
 
@@ -180,8 +180,8 @@
             </div>
 
             <div class="slider-control">
-                <div class="slider-label"><span>🌫️ Плотность тумана:</span><span id="fog-val">1.2</span></div>
-                <input type="range" id="fog-slider" min="0" max="3" step="0.1" value="1.2">
+                <div class="slider-label"><span>🌫️ Плотность тумана:</span><span id="fog-val">0.0</span></div>
+                <input type="range" id="fog-slider" min="0" max="3" step="0.1" value="0.0">
             </div>
 
             <div class="slider-control">
@@ -230,7 +230,7 @@
 
         let globalBuildSpeed = 0.005;
         let globalGrowthRate = 0.003;
-        let globalFogMult = 1.2;
+        let globalFogMult = 0.0;
         let globalSpawnDistance = 15;
         let globalMaxRadius = 4.5;
         let globalSpiralMult = 1.0;
@@ -252,6 +252,37 @@
         const mouse = new THREE.Vector2();
         const drawPlane = new THREE.Plane();
 
+        // Создаем текстуру вертикального градиента (синий -> зелено-бирюзовый -> желтый) для сцены Three.js
+        function createGradientTexture(color1, color2) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            const c1 = hexToRgb(color1);
+            const c2 = hexToRgb(color2);
+            const midR = Math.round(c1.r * 0.35 + c2.r * 0.65);
+            const midG = Math.round(c1.g * 0.35 + c2.g * 0.65);
+            const midB = Math.round(c1.b * 0.35 + c2.b * 0.65);
+            const midColor = rgbToHex(midR, midG, midB);
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+            gradient.addColorStop(0, color1);
+            gradient.addColorStop(0.25, color1);
+            gradient.addColorStop(0.5, midColor);
+            gradient.addColorStop(0.75, color2);
+            gradient.addColorStop(1, color2);
+
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 2, 512);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.generateMipmaps = false;
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            return texture;
+        }
+
         init();
         animate();
 
@@ -259,7 +290,10 @@
             const container = document.getElementById('canvas-container');
 
             scene = new THREE.Scene();
-            updateBackgroundColors('#0099ff', '#ffd700');
+            // Устанавливаем текстуру градиента как фон сцены Three.js, чтобы объекты не перекрывались однотонным цветом тумана
+            scene.background = createGradientTexture('#0099ff', '#ffd700');
+            // Полностью отключаем экспоненциальный туман сцены, чтобы фоновый градиент был виден идеально по всему пространству
+            scene.fog = null;
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
             camera.position.set(0, 0, 40);
@@ -329,7 +363,6 @@
         }
 
         function updateBackgroundColors(color1, color2) {
-            // Вычисляем промежуточный зелено-бирюзовый оттенок для точного соответствия вашему примеру перехода
             const c1 = hexToRgb(color1);
             const c2 = hexToRgb(color2);
             const midR = (c1.r * 0.35 + c2.r * 0.65);
@@ -337,10 +370,10 @@
             const midB = (c1.b * 0.35 + c2.b * 0.65);
             const midColor = rgbToHex(midR, midG, midB);
 
-            // Создаем многоступенчатый градиент с широкой полосой плавного смешивания в центре
+            // Синхронизируем CSS-фон интерфейса с точным образцом
             document.body.style.background = `linear-gradient(to bottom, ${color1} 0%, ${color1} 25%, ${midColor} 50%, ${color2} 75%, ${color2} 100%)`;
-            scene.background = new THREE.Color(color1);
-            scene.fog = new THREE.FogExp2(color1, 0.025);
+            // Устанавливаем градиентную текстуру на фон сцены Three.js
+            scene.background = createGradientTexture(color1, color2);
         }
 
         function setupUIListeners() {
@@ -853,13 +886,6 @@
             requestAnimationFrame(animate);
 
             controls.update();
-
-            const camDist = camera.position.distanceTo(controls.target);
-            if (globalFogMult > 0) {
-                scene.fog.density = (globalFogMult) / Math.max(camDist, 15);
-            } else {
-                scene.fog.density = 0.0001;
-            }
 
             nodes.forEach(node => {
                 if (node.owner !== 'NEUTRAL' && node.radius < node.maxRadius) {
