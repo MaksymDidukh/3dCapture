@@ -3,12 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Random Spiral Vine Battle</title>
+    <title>3dCapture</title>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background-color: #050811;
+            /* Плавный многоступенчатый градиент как на образце: синий сверху, зеленоватый переход посередине и желтый снизу */
+            background: linear-gradient(to bottom, #0099ff 0%, #0099ff 25%, #4bb385 50%, #ffd700 75%, #ffd700 100%);
+            background-attachment: fixed;
             font-family: sans-serif;
             user-select: none;
         }
@@ -16,30 +18,58 @@
             width: 100vw;
             height: 100vh;
         }
-        #ui {
+        #ui-wrapper {
             position: absolute;
             top: 20px;
             left: 20px;
+            z-index: 10;
+        }
+        #menu-toggle-btn {
+            background: rgba(5, 8, 17, 0.85);
+            border: 1px solid #00f0ff;
+            color: #00f0ff;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 0 10px rgba(0,255,255,0.3);
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #menu-toggle-btn:hover {
+            background: rgba(0, 240, 255, 0.2);
+            box-shadow: 0 0 15px rgba(0,255,255,0.6);
+        }
+        #ui {
+            margin-top: 10px;
             color: #ffffff;
-            pointer-events: none;
             font-size: 13px;
             text-shadow: 0 0 8px rgba(0,255,255,0.5);
             display: flex;
             flex-direction: column;
             gap: 10px;
-            background: rgba(5, 8, 17, 0.75);
+            background: rgba(5, 8, 17, 0.85);
             padding: 15px;
             border-radius: 8px;
             border: 1px solid rgba(0, 240, 255, 0.3);
-            max-width: 300px;
+            width: 280px;
+            max-height: 75vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        #ui.collapsed {
+            display: none;
         }
         .btn-group {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
         }
-        button {
-            pointer-events: auto;
+        button.action-btn {
             background: rgba(0, 240, 255, 0.2);
             border: 1px solid #00f0ff;
             color: white;
@@ -49,17 +79,16 @@
             font-size: 13px;
             transition: 0.2s;
         }
-        button:hover {
+        button.action-btn:hover {
             background: rgba(0, 240, 255, 0.5);
         }
-        button:disabled {
+        button.action-btn:disabled {
             background: rgba(255, 255, 255, 0.05);
             border-color: #555555;
             color: #777777;
             cursor: not-allowed;
         }
         .slider-control {
-            pointer-events: auto;
             display: flex;
             flex-direction: column;
             gap: 4px;
@@ -70,12 +99,26 @@
             color: #00f0ff;
         }
         .checkbox-control {
-            pointer-events: auto;
             display: flex;
             align-items: center;
             gap: 8px;
             color: #00f0ff;
             cursor: pointer;
+        }
+        .color-picker-control {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #00f0ff;
+        }
+        .color-picker-control input[type="color"] {
+            border: 1px solid #00f0ff;
+            background: transparent;
+            width: 32px;
+            height: 24px;
+            cursor: pointer;
+            border-radius: 4px;
+            padding: 0;
         }
         input[type=range] {
             accent-color: #00f0ff;
@@ -87,41 +130,79 @@
             height: 16px;
             cursor: pointer;
         }
+        .help-text {
+            font-size: 11px;
+            color: #88c0d0;
+            border-bottom: 1px solid rgba(0,240,255,0.2);
+            padding-bottom: 6px;
+        }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <div>ЛКМ + Драг: Протянуть лозу | Клик: Emoji</div>
-        <div>ПКМ: Вращение | Колесико: Масштаб</div>
+    <div id="ui-wrapper">
+        <button id="menu-toggle-btn">⚙️ Меню настроек</button>
+        <div id="ui" class="collapsed">
+            <div class="help-text">ЛКМ + Драг: Протянуть лозу<br>Клик по сфере: Emoji<br>ПКМ: Вращение | Колесико: Масштаб</div>
 
-        <label class="checkbox-control">
-            <input type="checkbox" id="emoji-toggle" checked>
-            <span>😃 Отображать смайлики</span>
-        </label>
+            <label class="checkbox-control">
+                <input type="checkbox" id="emoji-toggle" checked>
+                <span>😃 Отображать смайлики</span>
+            </label>
 
-        <div class="slider-control">
-            <div class="slider-label"><span>🌫️ Плотность тумана:</span><span id="fog-val">1.2</span></div>
-            <input type="range" id="fog-slider" min="0" max="3" step="0.1" value="1.2">
-        </div>
+            <label class="checkbox-control">
+                <input type="checkbox" id="ai-player-toggle">
+                <span>🤖 Компьютер играет за игрока</span>
+            </label>
 
-        <div class="slider-control">
-            <div class="slider-label"><span>📍 Дистанция спавна:</span><span id="spawn-dist-val">15</span></div>
-            <input type="range" id="spawn-dist-slider" min="5" max="500" step="5" value="15">
-        </div>
+            <div class="color-picker-control">
+                <span>🎨 Верх (Синий):</span>
+                <input type="color" id="bg-color-1" value="#0099ff">
+            </div>
 
-        <div class="slider-control">
-            <div class="slider-label"><span>🌱 Скорость роста:</span><span id="growth-val">0.003</span></div>
-            <input type="range" id="growth-slider" min="0.0005" max="0.015" step="0.0005" value="0.003">
-        </div>
+            <div class="color-picker-control">
+                <span>🎨 Низ (Желтый):</span>
+                <input type="color" id="bg-color-2" value="#ffd700">
+            </div>
 
-        <div class="slider-control">
-            <div class="slider-label"><span>⚡ Скорость лозы:</span><span id="speed-val">0.005</span></div>
-            <input type="range" id="speed-slider" min="0.001" max="0.02" step="0.001" value="0.005">
-        </div>
+            <div class="slider-control">
+                <div class="slider-label"><span>🛡️ Живучесть сфер:</span><span id="vitality-val">4.5</span></div>
+                <input type="range" id="vitality-slider" min="2.0" max="8.0" step="0.5" value="4.5">
+            </div>
 
-        <div class="btn-group">
-            <button id="spawn-random-btn">🎲 Создать сферу</button>
-            <button id="respawn-btn">🔄 Возродиться</button>
+            <div class="slider-control">
+                <div class="slider-label"><span>〰️ Синусоидальность лозы:</span><span id="spiral-val">1.0</span></div>
+                <input type="range" id="spiral-slider" min="0" max="3.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="slider-control">
+                <div class="slider-label"><span>🎲 Рандомность лозы:</span><span id="randomness-val">1.0</span></div>
+                <input type="range" id="randomness-slider" min="0.1" max="3.0" step="0.1" value="1.0">
+            </div>
+
+            <div class="slider-control">
+                <div class="slider-label"><span>🌫️ Плотность тумана:</span><span id="fog-val">1.2</span></div>
+                <input type="range" id="fog-slider" min="0" max="3" step="0.1" value="1.2">
+            </div>
+
+            <div class="slider-control">
+                <div class="slider-label"><span>📍 Дистанция спавна:</span><span id="spawn-dist-val">15</span></div>
+                <input type="range" id="spawn-dist-slider" min="5" max="500" step="5" value="15">
+            </div>
+
+            <div class="slider-control">
+                <div class="slider-label"><span>🌱 Скорость роста:</span><span id="growth-val">0.003</span></div>
+                <input type="range" id="growth-slider" min="0.0005" max="0.015" step="0.0005" value="0.003">
+            </div>
+
+            <div class="slider-control">
+                <div class="slider-label"><span>⚡ Скорость лозы:</span><span id="speed-val">0.005</span></div>
+                <input type="range" id="speed-slider" min="0.001" max="0.02" step="0.001" value="0.005">
+            </div>
+
+            <div class="btn-group">
+                <button class="action-btn" id="spawn-random-btn">🎲 Создать сферу</button>
+                <button class="action-btn" id="respawn-btn">🔄 Возродиться</button>
+            </div>
         </div>
     </div>
     <div id="canvas-container"></div>
@@ -151,6 +232,10 @@
         let globalGrowthRate = 0.003;
         let globalFogMult = 1.2;
         let globalSpawnDistance = 15;
+        let globalMaxRadius = 4.5;
+        let globalSpiralMult = 1.0;
+        let globalVineRandomness = 1.0;
+        let aiPlayForPlayer = false;
         let showEmojis = true;
         const BASE_MAX_VISION = 500;
 
@@ -174,7 +259,7 @@
             const container = document.getElementById('canvas-container');
 
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x050811, 0.025);
+            updateBackgroundColors('#0099ff', '#ffd700');
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
             camera.position.set(0, 0, 40);
@@ -209,7 +294,7 @@
             dragLine.visible = false;
             scene.add(dragLine);
 
-            setupSliderListeners();
+            setupUIListeners();
 
             window.addEventListener('resize', onWindowResize);
             renderer.domElement.addEventListener('pointerdown', onPointerDown);
@@ -229,13 +314,89 @@
             setInterval(checkPlayerStatus, 300);
         }
 
-        function setupSliderListeners() {
+        function hexToRgb(hex) {
+            let c = hex.replace('#', '');
+            if (c.length === 3) c = c.split('').map(x => x + x).join('');
+            const num = parseInt(c, 16);
+            return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+        }
+
+        function rgbToHex(r, g, b) {
+            return '#' + [r, g, b].map(x => {
+                const hex = Math.round(x).toString(16);
+                return hex.length === 1 ? '0' + hex : hex;
+            }).join('');
+        }
+
+        function updateBackgroundColors(color1, color2) {
+            // Вычисляем промежуточный зелено-бирюзовый оттенок для точного соответствия вашему примеру перехода
+            const c1 = hexToRgb(color1);
+            const c2 = hexToRgb(color2);
+            const midR = (c1.r * 0.35 + c2.r * 0.65);
+            const midG = (c1.g * 0.35 + c2.g * 0.65);
+            const midB = (c1.b * 0.35 + c2.b * 0.65);
+            const midColor = rgbToHex(midR, midG, midB);
+
+            // Создаем многоступенчатый градиент с широкой полосой плавного смешивания в центре
+            document.body.style.background = `linear-gradient(to bottom, ${color1} 0%, ${color1} 25%, ${midColor} 50%, ${color2} 75%, ${color2} 100%)`;
+            scene.background = new THREE.Color(color1);
+            scene.fog = new THREE.FogExp2(color1, 0.025);
+        }
+
+        function setupUIListeners() {
+            const menuToggleBtn = document.getElementById('menu-toggle-btn');
+            const uiPanel = document.getElementById('ui');
+
+            menuToggleBtn.addEventListener('click', () => {
+                uiPanel.classList.toggle('collapsed');
+                menuToggleBtn.innerText = uiPanel.classList.contains('collapsed') ? '⚙️ Меню настроек' : '✖ Закрыть меню';
+            });
+
             const emojiToggle = document.getElementById('emoji-toggle');
             emojiToggle.addEventListener('change', (e) => {
                 showEmojis = e.target.checked;
                 nodes.forEach(node => {
                     if (node.sprite) {
                         node.sprite.visible = showEmojis;
+                    }
+                });
+            });
+
+            const aiToggle = document.getElementById('ai-player-toggle');
+            aiToggle.addEventListener('change', (e) => {
+                aiPlayForPlayer = e.target.checked;
+            });
+
+            const bgColor1 = document.getElementById('bg-color-1');
+            const bgColor2 = document.getElementById('bg-color-2');
+            
+            const handleBgChange = () => {
+                updateBackgroundColors(bgColor1.value, bgColor2.value);
+            };
+            bgColor1.addEventListener('input', handleBgChange);
+            bgColor2.addEventListener('input', handleBgChange);
+
+            const spiralSlider = document.getElementById('spiral-slider');
+            spiralSlider.addEventListener('input', (e) => {
+                globalSpiralMult = parseFloat(e.target.value);
+                document.getElementById('spiral-val').innerText = globalSpiralMult;
+            });
+
+            const randomnessSlider = document.getElementById('randomness-slider');
+            randomnessSlider.addEventListener('input', (e) => {
+                globalVineRandomness = parseFloat(e.target.value);
+                document.getElementById('randomness-val').innerText = globalVineRandomness;
+            });
+
+            const vitalitySlider = document.getElementById('vitality-slider');
+            vitalitySlider.addEventListener('input', (e) => {
+                globalMaxRadius = parseFloat(e.target.value);
+                document.getElementById('vitality-val').innerText = globalMaxRadius;
+                nodes.forEach(node => {
+                    node.maxRadius = globalMaxRadius;
+                    if (node.radius > node.maxRadius) {
+                        node.radius = node.maxRadius;
+                        node.mesh.scale.setScalar(node.radius);
                     }
                 });
             });
@@ -325,12 +486,14 @@
             const side = new THREE.Vector3().crossVectors(normalDir, up).normalize();
             const orthoUp = new THREE.Vector3().crossVectors(side, normalDir).normalize();
 
+            const baseAmplitude = Math.min(len * 0.15, 6.0) * globalSpiralMult;
+
             const numCoils = 6;
             const coilParams = [];
             for (let i = 0; i < numCoils; i++) {
                 coilParams.push({
-                    freqShift: 0.8 + Math.random() * 0.6,
-                    ampNoise: 0.6 + Math.random() * 0.8,
+                    freqShift: (0.8 + Math.random() * 0.6) * globalVineRandomness,
+                    ampNoise: (0.6 + Math.random() * 0.8) * globalVineRandomness,
                     phase: Math.random() * Math.PI * 2
                 });
             }
@@ -343,7 +506,7 @@
                 const params = coilParams[currentCoilIndex];
 
                 const baseAngle = t * Math.PI * 2 * numCoils;
-                const r = Math.sin(t * Math.PI) * (0.8 * params.ampNoise) * Math.sin(baseAngle * params.freqShift + params.phase);
+                const r = Math.sin(t * Math.PI) * baseAmplitude * params.ampNoise * Math.sin(baseAngle * params.freqShift + params.phase);
 
                 const offsetX = side.clone().multiplyScalar(Math.cos(baseAngle) * r);
                 const offsetY = orthoUp.clone().multiplyScalar(Math.sin(baseAngle) * r);
@@ -404,7 +567,7 @@
                 sprite: sprite,
                 owner: owner,
                 radius: radius,
-                maxRadius: 4.5,
+                maxRadius: globalMaxRadius,
                 minRadius: 1.0
             };
 
@@ -598,11 +761,17 @@
 
         function aiTick() {
             const teams = ['ENEMY1', 'ENEMY2', 'ENEMY3'];
+            if (aiPlayForPlayer) {
+                teams.push('PLAYER');
+            }
+
             teams.forEach(team => {
                 const myNodes = nodes.filter(n => n.owner === team);
 
                 if (myNodes.length === 0) {
-                    if (Math.random() < 0.35) {
+                    if (team === 'PLAYER' && aiPlayForPlayer) {
+                        spawnNodeInView('PLAYER');
+                    } else if (Math.random() < 0.35) {
                         spawnNodeInView(team);
                     }
                     return;
@@ -611,7 +780,7 @@
                 if (Math.random() < 0.3 && myNodes.length < 8) {
                     const choice = Math.random();
                     if (choice < 0.5) {
-                        spawnNodeInView(null);
+                        spawnNodeInView(team === 'PLAYER' ? 'PLAYER' : null);
                     } else {
                         const parent = myNodes[Math.floor(Math.random() * myNodes.length)];
                         if (parent.radius > 2.0) {
@@ -689,7 +858,7 @@
             if (globalFogMult > 0) {
                 scene.fog.density = (globalFogMult) / Math.max(camDist, 15);
             } else {
-                scene.fog.density = 0.00001;
+                scene.fog.density = 0.0001;
             }
 
             nodes.forEach(node => {
@@ -762,6 +931,6 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         }
     </script>
-     <script src="https://dmamax.vercel.app/legal-module.js"></script>
+    <script src="https://dmamax.vercel.app/legal-module.js"></script>
 </body>
 </html>
