@@ -8,7 +8,6 @@
         body {
             margin: 0;
             overflow: hidden;
-            /* Плавный многоступенчатый градиент как на образце: синий сверху, зеленоватый переход посередине и желтый снизу */
             background: linear-gradient(to bottom, #0099ff 0%, #0099ff 25%, #4bb385 50%, #ffd700 75%, #ffd700 100%);
             background-attachment: fixed;
             font-family: sans-serif;
@@ -145,6 +144,11 @@
             <div class="help-text">ЛКМ + Драг: Протянуть лозу<br>Клик по сфере: Emoji<br>ПКМ: Вращение | Колесико: Масштаб</div>
 
             <label class="checkbox-control">
+                <input type="checkbox" id="mode-3d-toggle" checked>
+                <span>🌍 Режим 3D (Вращение камеры)</span>
+            </label>
+
+            <label class="checkbox-control">
                 <input type="checkbox" id="emoji-toggle" checked>
                 <span>😃 Отображать смайлики</span>
             </label>
@@ -237,6 +241,7 @@
         let globalVineRandomness = 1.0;
         let aiPlayForPlayer = false;
         let showEmojis = true;
+        let is3DMode = true;
         const BASE_MAX_VISION = 500;
 
         let scene, camera, renderer, controls;
@@ -252,7 +257,6 @@
         const mouse = new THREE.Vector2();
         const drawPlane = new THREE.Plane();
 
-        // Создаем текстуру вертикального градиента (синий -> зелено-бирюзовый -> желтый) для сцены Three.js
         function createGradientTexture(color1, color2) {
             const canvas = document.createElement('canvas');
             canvas.width = 2;
@@ -290,9 +294,7 @@
             const container = document.getElementById('canvas-container');
 
             scene = new THREE.Scene();
-            // Устанавливаем текстуру градиента как фон сцены Three.js, чтобы объекты не перекрывались однотонным цветом тумана
             scene.background = createGradientTexture('#0099ff', '#ffd700');
-            // Полностью отключаем экспоненциальный туман сцены, чтобы фоновый градиент был виден идеально по всему пространству
             scene.fog = null;
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
@@ -370,9 +372,7 @@
             const midB = (c1.b * 0.35 + c2.b * 0.65);
             const midColor = rgbToHex(midR, midG, midB);
 
-            // Синхронизируем CSS-фон интерфейса с точным образцом
             document.body.style.background = `linear-gradient(to bottom, ${color1} 0%, ${color1} 25%, ${midColor} 50%, ${color2} 75%, ${color2} 100%)`;
-            // Устанавливаем градиентную текстуру на фон сцены Three.js
             scene.background = createGradientTexture(color1, color2);
         }
 
@@ -383,6 +383,18 @@
             menuToggleBtn.addEventListener('click', () => {
                 uiPanel.classList.toggle('collapsed');
                 menuToggleBtn.innerText = uiPanel.classList.contains('collapsed') ? '⚙️ Меню настроек' : '✖ Закрыть меню';
+            });
+
+            const mode3dToggle = document.getElementById('mode-3d-toggle');
+            mode3dToggle.addEventListener('change', (e) => {
+                is3DMode = e.target.checked;
+                if (!is3DMode) {
+                    controls.target.set(0, 0, 0);
+                    camera.position.set(0, 0, 45);
+                    controls.enableRotate = false;
+                } else {
+                    controls.enableRotate = true;
+                }
             });
 
             const emojiToggle = document.getElementById('emoji-toggle');
@@ -513,6 +525,17 @@
             const len = dir.length();
             if (len === 0) return [from.clone()];
 
+            // В 2D-режиме делаем лозу абсолютно прямой линией
+            if (!is3DMode) {
+                for (let i = 0; i <= 10; i++) {
+                    const t = i / 10;
+                    const p = new THREE.Vector3().lerpVectors(from, to, t);
+                    p.z = 0;
+                    points.push(p);
+                }
+                return points;
+            }
+
             const normalDir = dir.clone().normalize();
             let up = new THREE.Vector3(0, 1, 0);
             if (Math.abs(normalDir.dot(up)) > 0.9) up.set(1, 0, 0);
@@ -551,6 +574,8 @@
         }
 
         function createNode(x, y, z, owner, radius) {
+            if (!is3DMode) z = 0;
+
             const geom = new THREE.SphereGeometry(1, 32, 32);
             const mat = new THREE.MeshPhongMaterial({
                 color: COLORS[owner],
@@ -617,7 +642,7 @@
                 const offset = new THREE.Vector3(
                     (Math.random() - 0.5) * 2,
                     (Math.random() - 0.5) * 2,
-                    (Math.random() - 0.5) * 2
+                    is3DMode ? (Math.random() - 0.5) * 2 : 0
                 ).normalize().multiplyScalar(globalSpawnDistance);
                 
                 spawnPos.copy(baseNode.mesh.position).add(offset);
@@ -630,11 +655,15 @@
 
                 const offsetX = (Math.random() - 0.5) * visibleWidth * 0.7;
                 const offsetY = (Math.random() - 0.5) * visibleHeight * 0.7;
-                const offsetZ = (Math.random() - 0.5) * (distance * 0.3);
+                const offsetZ = is3DMode ? (Math.random() - 0.5) * (distance * 0.3) : 0;
 
-                spawnPos.set(offsetX, offsetY, -distance + offsetZ);
-                spawnPos.applyMatrix4(camera.matrixWorld);
+                spawnPos.set(offsetX, offsetY, offsetZ);
+                if (is3DMode) {
+                    spawnPos.applyMatrix4(camera.matrixWorld);
+                }
             }
+
+            if (!is3DMode) spawnPos.z = 0;
 
             const teams = ['NEUTRAL', 'ENEMY1', 'ENEMY2', 'ENEMY3'];
             const randomTeam = forcedTeam || teams[Math.floor(Math.random() * teams.length)];
@@ -708,7 +737,7 @@
                 if (hitNode && hitNode.owner === 'PLAYER') {
                     selectedNode = hitNode;
                     drawPlane.setFromNormalAndCoplanarPoint(
-                        camera.getWorldDirection(new THREE.Vector3()).negate(),
+                        is3DMode ? camera.getWorldDirection(new THREE.Vector3()).negate() : new THREE.Vector3(0, 0, 1),
                         selectedNode.mesh.position
                     );
                     dragLine.visible = true;
@@ -719,6 +748,7 @@
         function onPointerMove(e) {
             if (!selectedNode) return;
             const worldPos = getIntersectionPoint(e);
+            if (!is3DMode) worldPos.z = 0;
             const start = selectedNode.mesh.position;
             const points = generateRandomSpiralPoints(start, worldPos, 60);
 
